@@ -964,6 +964,49 @@ def _verify_and_repair_color_group(
     )
 
 
+def find_missing_pixels(
+    cfg: AppConfig,
+    canvas_rect: Tuple[int, int, int, int],
+    grid_w: int,
+    grid_h: int,
+    get_pixel: Callable[[int, int], RGB],
+    should_stop: Optional[Callable[[], bool]] = None,
+) -> set[Tuple[int, int]]:
+    """Compara as cores do desenho com o que aparece no editor do jogo.
+
+    Usa a mesma paleta da pintura. A comparação é aproximada, pois o jogo
+    pode mudar levemente o RGB exibido na tela.
+    """
+    missing: set[Tuple[int, int]] = set()
+    tolerance = max(15, int(getattr(cfg, "verify_tolerance", 35)))
+    tolerance2 = tolerance * tolerance
+    matches: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+
+    # A captura deve acontecer antes de mover o mouse ou pintar qualquer pixel.
+    for y in range(grid_h):
+        for x in range(grid_w):
+            if should_stop and should_stop():
+                return missing
+            desired = get_pixel(x, y)
+            if desired not in matches:
+                matches[desired] = _find_best_match(desired, cfg)
+            match = matches[desired]
+            if match is None:
+                continue
+            _main, shade = match
+            cx, cy = _cell_center(canvas_rect, grid_w, grid_h, x, y)
+            actual = get_screen_pixel_rgb(cx, cy)
+            if _dist2(actual, shade.rgb) <= tolerance2:
+                continue
+            # Evita retocar à toa quando a iluminação muda a cor da tela.
+            nearest = _find_best_match(actual, cfg)
+            if nearest is not None and nearest[1].rgb == shade.rgb:
+                continue
+            missing.add((x, y))
+
+    return missing
+
+
 def paint_grid(
     cfg: AppConfig,
     canvas_rect: Tuple[int, int, int, int],
