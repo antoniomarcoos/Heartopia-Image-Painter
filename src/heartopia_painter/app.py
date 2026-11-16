@@ -1759,9 +1759,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     run_cfg = copy.copy(self._cfg)
                     run_cfg.bucket_fill_enabled = False
                     run_cfg.bucket_fill_regions_enabled = False
-                    # Do not let streaming checks replace final shade verification.
+                    # Verify the completed canvas once, rather than repeatedly
+                    # interrupting shade groups with screen reads.
                     run_cfg.verify_streaming_enabled = False
-                    run_cfg.verify_rows = True
+                    run_cfg.verify_rows = False
 
                 if repair:
                     status_cb_early = lambda msg: signals.status.emit(str(msg))
