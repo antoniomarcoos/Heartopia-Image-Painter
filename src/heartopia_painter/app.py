@@ -1706,6 +1706,29 @@ class MainWindow(QtWidgets.QMainWindow):
         # Capture the active (foreground) window as the game window for overlay anchoring.
         # This runs after the countdown, so the user should have focused the game.
         self._game_window_rect = self._capture_foreground_window_rect()
+        if self._game_window_rect is not None:
+            left, top, right, bottom = self._game_window_rect
+            cx, cy, cw, ch = self._canvas_rect
+            if (
+                cw <= 0 or ch <= 0
+                or cx < left or cy < top
+                or cx + cw > right or cy + ch > bottom
+            ):
+                self.btn_paint.setEnabled(True)
+                self.btn_resume.setEnabled(bool(resume))
+                self.btn_repair.setEnabled(True)
+                self.btn_repair_rows.setEnabled(True)
+                self.btn_erase.setEnabled(True)
+                self.btn_stop.setEnabled(False)
+                QtWidgets.QMessageBox.warning(
+                    self,
+                    "Área do desenho fora da janela",
+                    "A área salva não cabe na janela que está aberta agora.\\n\\n"
+                    "Isso pode acontecer se o jogo foi movido ou redimensionado. "
+                    "Volte ao Heartopia, selecione novamente a área do desenho "
+                    "e confira as posições dos botões da paleta antes de continuar.",
+                )
+                return
         self._start_esc_listener()
 
         # Prepare the in-game status overlay (UI thread only).
