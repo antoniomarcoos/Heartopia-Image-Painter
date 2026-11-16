@@ -1531,7 +1531,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
         denom = max(1, int(self._paint_total) or int(total) or 1)
         pct = int((len(self._paint_done) / denom) * 100)
-        self.progress.setValue(max(0, min(100, pct)))
+        # O retorno do clique confirma o envio, não a pintura no jogo.
+        # Reserve 100% para uma verificação real da tela.
+        self.progress.setValue(max(0, min(99, pct)))
 
         # Replica canvas progress (best-effort)
         if bool(getattr(self._cfg, "status_overlay_enabled", True)):
@@ -1550,7 +1552,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_resume.setEnabled(False)
         self.btn_erase.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        self.progress.setValue(100)
+        # O fim da fila não garante que o jogo registrou todos os pixels.
+        self.progress.setValue(99)
+        self.statusBar().showMessage(
+            "Comandos enviados. Confira o desenho no jogo; podem existir pixels faltando.",
+            15000,
+        )
         self._stop_esc_listener()
         self._hide_status_overlay()
         self._reset_paint_session()
