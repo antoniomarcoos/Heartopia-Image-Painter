@@ -1748,6 +1748,21 @@ class MainWindow(QtWidgets.QMainWindow):
 
                 skip_fn = (lambda x, y: (int(x), int(y)) in self._paint_done) if resume else None
                 run_cfg = self._cfg
+                dense_canvas = (
+                    self._canvas_rect[2] / self._loaded.grid.w < 4
+                    or self._canvas_rect[3] / self._loaded.grid.h < 4
+                )
+                if dense_canvas and not resume:
+                    # Dense canvases need each cell painted independently. Bucket
+                    # fills can mark entire areas complete without actually
+                    # confirming their pixels in the game.
+                    run_cfg = copy.copy(self._cfg)
+                    run_cfg.bucket_fill_enabled = False
+                    run_cfg.bucket_fill_regions_enabled = False
+                    # Do not let streaming checks replace final shade verification.
+                    run_cfg.verify_streaming_enabled = False
+                    run_cfg.verify_rows = True
+
                 if repair:
                     status_cb_early = lambda msg: signals.status.emit(str(msg))
                     status_cb_early("Checking canvas colors...")
@@ -1806,8 +1821,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     options=opts,
                     paint_mode=self._cfg.paint_mode,
                     skip=skip_fn,
-                    allow_bucket_fill=(not resume and not repair),
-                    allow_region_bucket_fill=(not repair) and ((not resume) or (self._paint_base_bucket_key is not None)),
+                    allow_bucket_fill=(not resume and not repair and not dense_canvas),
+                    allow_region_bucket_fill=(not dense_canvas and not repair) and ((not resume) or (self._paint_base_bucket_key is not None)),
                     resume_base_bucket_key=(
                         (self._paint_base_bucket_key[0], self._paint_base_bucket_key[1])
                         if resume and self._paint_base_bucket_key is not None
