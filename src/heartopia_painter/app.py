@@ -1327,7 +1327,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if QtWidgets.QMessageBox.question(
             self,
             "Revisar falhas",
-            "Deixe o mesmo desenho aberto no jogo, sem mover a janela.\\n\\n"
+            "Deixe o mesmo desenho aberto no jogo, sem mover a janela.\n\n"
             "A revisão compara a tela com a imagem e pode retocar pixels que pareçam diferentes. "
             "Deseja continuar?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
@@ -1725,6 +1725,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         grid_h=self._loaded.grid.h,
                         get_pixel=get_pixel,
                         should_stop=lambda: self._stop_flag,
+                        status_cb=status_cb_early,
                     )
                     if self._stop_flag:
                         signals.stopped.emit("Revisão interrompida")
