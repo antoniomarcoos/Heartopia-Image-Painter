@@ -996,6 +996,78 @@ def _verify_and_repair_color_group(
     )
 
 
+def repaint_missing_pixels_offset(
+    cfg: AppConfig,
+    canvas_rect: Tuple[int, int, int, int],
+    grid_w: int,
+    grid_h: int,
+    get_pixel: Callable[[int, int], RGB],
+    missing: set[Tuple[int, int]],
+    options: PainterOptions,
+    offset_y: int,
+    should_stop: Optional[Callable[[], bool]] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> None:
+    """Retry stubborn pixels slightly above/below their previous click positions.
+
+    Never crosses an approximate cell boundary. This helps when a 150x150
+    cell lies over a grid seam and the cursor reaches it without painting.
+    """
+    if not missing:
+        return
+    if cfg.paint_tool_button_pos is None:
+        raise RuntimeError("Paint tool button has not been configured")
+
+    groups: Dict[Tuple[str, Point], Tuple[MainColor, ShadeButton, List[Tuple[int, int]]]] = {}
+    matched: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+    for x, y in sorted(missing, key=lambda xy: (xy[1], xy[0])):
+        rgb = get_pixel(x, y)
+        if rgb not in matched:
+            matched[rgb] = _find_best_match(rgb, cfg)
+        match = matched[rgb]
+        if match is None:
+            continue
+        main, shade = match
+        key = (main.name, shade.pos)
+        if key not in groups:
+            groups[key] = (main, shade, [])
+        groups[key][2].append((x, y))
+
+    last_main: Optional[MainColor] = None
+    last_shade: Optional[ShadeButton] = None
+    panel_open = False
+    try:
+        for main, shade, coords in sorted(groups.values(), key=lambda item: -len(item[2])):
+            if should_stop and should_stop():
+                return
+            last_main, last_shade, panel_open = _select_shade(
+                cfg, options, main, shade, last_main, last_shade, panel_open
+            )
+            if panel_open and cfg.back_button_pos is not None:
+                _tap(cfg.back_button_pos, options)
+                panel_open = False
+            _tap(cfg.paint_tool_button_pos, options)
+            for x, y in coords:
+                if should_stop and should_stop():
+                    return
+                cx, cy = _cell_center(canvas_rect, grid_w, grid_h, x, y)
+                x0, y0, w, h = canvas_rect
+                top = y0 + (y * h) // grid_h
+                bottom = y0 + ((y + 1) * h) // grid_h - 1
+                # Keep the retry inside this cell's own integer-pixel bounds.
+                retry_y = min(max(cy + offset_y, top), max(top, bottom))
+                _tap((cx, retry_y), options, before_down_delay_s=0.04)
+                if progress_cb is not None:
+                    progress_cb(x, y)
+            # Reset selection tracking between groups, matching the main painter.
+            last_main = None
+            last_shade = None
+    finally:
+        # Ensure no shades panel remains over the canvas.
+        if panel_open and cfg.back_button_pos is not None:
+            _tap(cfg.back_button_pos, options)
+
+
 def find_missing_pixels(
     cfg: AppConfig,
     canvas_rect: Tuple[int, int, int, int],
