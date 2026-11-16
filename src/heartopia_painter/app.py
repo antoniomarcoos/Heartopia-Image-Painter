@@ -478,8 +478,8 @@ class MainWindow(QtWidgets.QMainWindow):
         rowp = QtWidgets.QHBoxLayout()
         self.btn_paint = QtWidgets.QPushButton("Paint now")
         self.btn_resume = QtWidgets.QPushButton("Resume")
-        self.btn_repair = QtWidgets.QPushButton("Repair Missing Pixels")
-        self.btn_repair_rows = QtWidgets.QPushButton("Repaint Rows")
+        self.btn_repair = QtWidgets.QPushButton("Revisar falhas")
+        self.btn_repair_rows = QtWidgets.QPushButton("Retocar linhas")
         self.btn_resume.setEnabled(False)
         self.btn_erase = QtWidgets.QPushButton("Erase canvas")
         self.btn_stop = QtWidgets.QPushButton("Stop")
@@ -1319,20 +1319,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_repair(self) -> None:
         if self._loaded is None or self._canvas_rect is None:
             QtWidgets.QMessageBox.information(
-                self, "Repair Missing Pixels", "Import an image and select the canvas area first."
+                self, "Revisar falhas", "Importe uma imagem e selecione a área do desenho primeiro."
             )
             return
         if not self._cfg.main_colors or self._cfg.shades_panel_button_pos is None or self._cfg.back_button_pos is None:
             QtWidgets.QMessageBox.information(
-                self, "Repair Missing Pixels", "Set up the color palette before repairing."
+                self, "Revisar falhas", "Configure a paleta de cores antes de revisar."
             )
             return
         if QtWidgets.QMessageBox.question(
             self,
-            "Repair Missing Pixels",
-            "Keep the same canvas open in-game without moving the window.\n\n"
-            "The tool compares the screen with your image and may repaint cells that look different. "
-            "Continue?",
+            "Revisar falhas",
+            "Mantenha o mesmo desenho aberto no jogo, sem mover a janela.\n\n"
+            "O programa compara a tela com a imagem e pode retocar células que pareçam diferentes. "
+            "Deseja continuar?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
@@ -1342,27 +1342,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_repair_rows(self) -> None:
         if self._loaded is None or self._canvas_rect is None:
-            QtWidgets.QMessageBox.information(self, "Repaint Rows", "Import an image and select the canvas area first.")
+            QtWidgets.QMessageBox.information(self, "Retocar linhas", "Importe uma imagem e selecione a área do desenho primeiro.")
             return
         if not self._cfg.main_colors or self._cfg.shades_panel_button_pos is None or self._cfg.back_button_pos is None:
-            QtWidgets.QMessageBox.information(self, "Repaint Rows", "Set up the color palette first.")
+            QtWidgets.QMessageBox.information(self, "Retocar linhas", "Configure a paleta de cores primeiro.")
             return
         height = self._loaded.grid.h
         answer, ok = QtWidgets.QInputDialog.getText(
-            self, "Repaint Rows",
-            f"Enter rows from 1 to {height}. Example: 32 or 32-36."
+            self, "Retocar linhas",
+            f"Informe as linhas de 1 a {height}. Exemplo: 32 ou 32-36."
         )
         if not ok:
             return
         import re
         match = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+)\s*)?", answer)
         if match is None:
-            QtWidgets.QMessageBox.warning(self, "Repaint Rows", "Use 32 or 32-36.")
+            QtWidgets.QMessageBox.warning(self, "Retocar linhas", "Digite uma linha (32) ou um intervalo (32-36).")
             return
         start = int(match.group(1))
         end = int(match.group(2)) if match.group(2) else start
         if start < 1 or end > height or end < start:
-            QtWidgets.QMessageBox.warning(self, "Repaint Rows", f"Choose rows between 1 and {height}.")
+            QtWidgets.QMessageBox.warning(self, "Retocar linhas", f"Escolha linhas entre 1 e {height}.")
             return
         if not self._paint_countdown(seconds=3):
             return
@@ -1621,9 +1621,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # O fim da fila não garante que o jogo registrou todos os pixels.
         self.progress.setValue(99)
         if getattr(self, "_repair_rows_mode", False):
-            msg = "Row repaint finished. Check the result in-game."
+            msg = "Retoque das linhas enviado. Confira o resultado no jogo."
         elif getattr(self, "_repair_mode", False):
-            msg = "Repair pass finished. Check the result in-game."
+            msg = "Revisão enviada. Confira o resultado no jogo."
         else:
             msg = "Paint commands sent. Check the canvas for missing pixels."
         self.statusBar().showMessage(msg, 15000)
