@@ -363,11 +363,20 @@ def _ui_sanity_check_at(
 
 
 def _cell_center(canvas_rect: Tuple[int, int, int, int], grid_w: int, grid_h: int, x: int, y: int) -> Point:
+    """Choose a pixel inside the cell, away from grid borders when possible."""
     x0, y0, w, h = canvas_rect
-    cell_w = w / grid_w
-    cell_h = h / grid_h
-    cx = int(x0 + (x + 0.5) * cell_w)
-    cy = int(y0 + (y + 0.5) * cell_h)
+    if grid_w <= 0 or grid_h <= 0:
+        raise ValueError("Invalid canvas grid dimensions")
+
+    # Work in integer screen pixels to avoid floating-point rounding differences
+    # between the paint and verification paths.
+    left = x0 + (x * w) // grid_w
+    right = x0 + ((x + 1) * w) // grid_w - 1
+    top = y0 + (y * h) // grid_h
+    bottom = y0 + ((y + 1) * h) // grid_h - 1
+
+    cx = (left + max(left, right) + 1) // 2
+    cy = (top + max(top, bottom) + 1) // 2
     return (cx, cy)
 
 
@@ -493,8 +502,21 @@ def _paint_coord_runs(
         return
 
     x0, y0, w, h = canvas_rect
-    cell_w = w / grid_w
-    cell_h = h / grid_h
+    # Very small cells are more susceptible to missed clicks and grid borders.
+    dense_grid = (w / grid_w) < 4.0 or (h / grid_h) < 4.0
+    if dense_grid:
+        # Keep the user's config unchanged: apply safer timing only to this run.
+        options = PainterOptions(
+            move_duration_s=max(0.015, float(options.move_duration_s)),
+            mouse_down_s=max(0.035, float(options.mouse_down_s)),
+            after_click_delay_s=max(0.065, float(options.after_click_delay_s)),
+            panel_open_delay_s=float(options.panel_open_delay_s),
+            shade_select_delay_s=float(options.shade_select_delay_s),
+            row_delay_s=float(options.row_delay_s),
+            enable_drag_strokes=False,
+            drag_step_duration_s=float(options.drag_step_duration_s),
+            after_drag_delay_s=float(options.after_drag_delay_s),
+        )
 
     coords.sort(key=lambda xy: (xy[1], xy[0]))
     i = 0
@@ -511,11 +533,10 @@ def _paint_coord_runs(
             run.append((nx, ny))
             j += 1
 
-        pts: List[Point] = []
-        for rx, ry in run:
-            cx = int(x0 + (rx + 0.5) * cell_w)
-            cy = int(y0 + (ry + 0.5) * cell_h)
-            pts.append((cx, cy))
+        pts: List[Point] = [
+            _cell_center(canvas_rect, grid_w, grid_h, rx, ry)
+            for rx, ry in run
+        ]
 
         if options.enable_drag_strokes and len(pts) >= 2:
             if progress_cb:
@@ -1009,8 +1030,9 @@ def find_missing_pixels(
                 continue
             _, shade = match
             # Mesma conta de centro usada na pintura, mas relativa à captura.
-            cx = int(x0 + (x + 0.5) * width / grid_w) - x0
-            cy = int(y0 + (y + 0.5) * height / grid_h) - y0
+            cx, cy = _cell_center(canvas_rect, grid_w, grid_h, x, y)
+            cx -= x0
+            cy -= y0
             cx = max(0, min(width - 1, cx))
             cy = max(0, min(height - 1, cy))
             offset = cy * row_bytes + cx * 3
