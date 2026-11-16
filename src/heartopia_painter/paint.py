@@ -124,8 +124,15 @@ def _rapid_click_stroke(
     if not points:
         return
 
-    per_click_delay = max(0.0, float(opts.drag_step_duration_s))
+    # Cliques rápidos também precisam respeitar o atraso normal.
+    # Sem isso, o jogo pode ignorar alguns pixels de uma mesma linha.
+    per_click_delay = max(
+        0.04,
+        float(opts.drag_step_duration_s),
+        float(opts.after_click_delay_s),
+    )
     after_stroke_delay = max(0.0, float(opts.after_drag_delay_s))
+    hold_s = max(0.025, float(opts.mouse_down_s))
 
     for idx, (px, py) in enumerate(points):
         if should_stop and should_stop():
@@ -133,8 +140,7 @@ def _rapid_click_stroke(
         # Move as fast as possible; rely on per-click delay for stability.
         pyautogui.moveTo(px, py, duration=0)
         pyautogui.mouseDown(button="left")
-        if opts.mouse_down_s > 0:
-            time.sleep(max(0.0, float(opts.mouse_down_s)))
+        time.sleep(hold_s)
         pyautogui.mouseUp(button="left")
         if per_click_delay > 0:
             time.sleep(per_click_delay)
