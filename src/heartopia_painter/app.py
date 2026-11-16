@@ -13,7 +13,7 @@ from .screen import get_screen_pixel_rgb
 from .config import AppConfig, MainColor, ShadeButton, default_config_path, load_config, save_config
 from .image_processing import PixelGrid, load_and_resize_to_grid
 from .overlay import Marker, MarkersOverlay, PointResult, PointSelectOverlay, RectResult, RectSelectOverlay, StatusOverlay
-from .paint import PainterOptions, erase_canvas, paint_grid, find_missing_pixels, repaint_missing_pixels_offset
+from .paint import PainterOptions, erase_canvas, paint_grid, find_missing_pixels, repaint_missing_pixels_drag
 
 
 ONE_TO_ONE_PRESET_NAME = "1:1"
@@ -1905,7 +1905,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         else:
                             # If the same cell still looks wrong, the initial
                             # coordinate may lie on a non-paintable grid seam.
-                            repaint_missing_pixels_offset(
+                            repaint_missing_pixels_drag(
                                 cfg=safe_cfg,
                                 canvas_rect=self._canvas_rect,
                                 grid_w=self._loaded.grid.w,
@@ -1913,7 +1913,6 @@ class MainWindow(QtWidgets.QMainWindow):
                                 get_pixel=get_pixel,
                                 missing=missing,
                                 options=safe_opts,
-                                offset_y=1,
                                 should_stop=lambda: self._stop_flag,
                                 progress_cb=lambda x, y: signals.progress.emit(x, y),
                             )
@@ -1927,33 +1926,6 @@ class MainWindow(QtWidgets.QMainWindow):
                     else:
                         signals.stopped.emit("Stopped")
                     return
-
-                # Record which rows are still mismatched. The report contains
-                # only dimensions, positions and counts, never the user's image.
-                if remaining > 0 and not self._stop_flag:
-                    try:
-                        from collections import Counter
-                        counts = Counter(y for _x, y in missing)
-                        report_path = Path.cwd() / "heartopia-paint-diagnostic.txt"
-                        report_lines = [
-                            "Heartopia Image Painter - final scan",
-                            f"Canvas rectangle (screen pixels): {self._canvas_rect}",
-                            f"Game window rectangle: {self._game_window_rect}",
-                            f"Grid: {self._loaded.grid.w}x{self._loaded.grid.h}",
-                            f"Unmatched cells: {remaining}",
-                            "Rows (1-based): count / grid width",
-                        ]
-                        for yy, count in sorted(counts.items(), key=lambda entry: (-entry[1], entry[0])):
-                            report_lines.append(
-                                f"Row {yy + 1}: {count}/{self._loaded.grid.w}"
-                            )
-                        report_path.write_text(
-                            "\n".join(report_lines) + "\n",
-                            encoding="utf-8",
-                        )
-                        signals.status.emit(f"Final scan report: {report_path}")
-                    except Exception as report_error:
-                        signals.status.emit(f"Could not save diagnostic report: {report_error}")
 
                 signals.paint_result.emit(remaining == 0, remaining)
             except Exception as e:
