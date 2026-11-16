@@ -815,6 +815,11 @@ def _verify_and_repair_row(
                 in_shades_panel,
             )
 
+            # Painting with the shade chooser still open can intercept canvas clicks.
+            if in_shades_panel:
+                _tap(cfg.back_button_pos, options)
+                in_shades_panel = False
+
             xs.sort()
             # Break into contiguous runs so we can use the fast stroke option.
             run: List[int] = []
@@ -947,6 +952,11 @@ def _verify_and_repair_color_group(
             last_shade,
             in_shades_panel,
         )
+
+        # Close the chooser before any repair click reaches the canvas.
+        if in_shades_panel:
+            _tap(cfg.back_button_pos, options)
+            in_shades_panel = False
 
         # Repaint mismatches, using contiguous horizontal runs for speed.
         mismatches.sort(key=lambda xy: (xy[1], xy[0]))
@@ -1267,6 +1277,9 @@ def paint_grid(
                 last_shade=last_shade,
                 in_shades_panel=in_shades_panel,
             )
+            if in_shades_panel:
+                _tap(cfg.back_button_pos, options)
+                in_shades_panel = False
             _tap((cx, cy), options)
             if progress_cb:
                 progress_cb(int(x), int(y))
@@ -1385,6 +1398,12 @@ def paint_grid(
                 last_shade=last_shade,
                 in_shades_panel=in_shades_panel,
             )
+
+            # Never paint beneath the shade chooser. Its overlay can swallow
+            # mouse events for entire horizontal bands of the canvas.
+            if in_shades_panel:
+                _tap(cfg.back_button_pos, options)
+                in_shades_panel = False
 
             # Paint run
             run_len = run_end - run_start + 1
@@ -2092,6 +2111,12 @@ def _paint_grid_by_color(
                     status_cb(f"Painting shade: {main.name}/{shade.name} ({len(remaining)} px) …")
             except Exception:
                 pass
+
+        # Always close the shade chooser before painting the canvas.
+        # Otherwise all clicks in an overlapping horizontal strip can be lost.
+        if in_shades_panel:
+            _tap(cfg.back_button_pos, options)
+            in_shades_panel = False
 
         # Defensive: ensure the paint tool is active before doing normal pixel
         # painting. Region bucket-fill uses the bucket tool and, very rarely,
