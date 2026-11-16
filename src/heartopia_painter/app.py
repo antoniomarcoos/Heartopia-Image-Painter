@@ -478,8 +478,8 @@ class MainWindow(QtWidgets.QMainWindow):
         rowp = QtWidgets.QHBoxLayout()
         self.btn_paint = QtWidgets.QPushButton("Paint now")
         self.btn_resume = QtWidgets.QPushButton("Resume")
-        self.btn_repair = QtWidgets.QPushButton("Revisar falhas")
-        self.btn_repair_rows = QtWidgets.QPushButton("Retocar linhas")
+        self.btn_repair = QtWidgets.QPushButton("Repair Missing Pixels")
+        self.btn_repair_rows = QtWidgets.QPushButton("Repaint Rows")
         self.btn_resume.setEnabled(False)
         self.btn_erase = QtWidgets.QPushButton("Erase canvas")
         self.btn_stop = QtWidgets.QPushButton("Stop")
@@ -1319,20 +1319,20 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_repair(self) -> None:
         if self._loaded is None or self._canvas_rect is None:
             QtWidgets.QMessageBox.information(
-                self, "Revisar falhas", "Importe a imagem e selecione a área do desenho primeiro."
+                self, "Repair Missing Pixels", "Import an image and select the canvas area first."
             )
             return
         if not self._cfg.main_colors or self._cfg.shades_panel_button_pos is None or self._cfg.back_button_pos is None:
             QtWidgets.QMessageBox.information(
-                self, "Revisar falhas", "Configure a paleta de cores antes de revisar."
+                self, "Repair Missing Pixels", "Set up the color palette before repairing."
             )
             return
         if QtWidgets.QMessageBox.question(
             self,
-            "Revisar falhas",
+            "Repair Missing Pixels",
             "Deixe o mesmo desenho aberto no jogo, sem mover a janela.\n\n"
-            "A revisão compara a tela com a imagem e pode retocar pixels que pareçam diferentes. "
-            "Deseja continuar?",
+            "The tool compares the screen with your image and may repaint cells that look different. "
+            "Continue?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
         ) != QtWidgets.QMessageBox.StandardButton.Yes:
             return
@@ -1342,27 +1342,27 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_repair_rows(self) -> None:
         if self._loaded is None or self._canvas_rect is None:
-            QtWidgets.QMessageBox.information(self, "Retocar linhas", "Importe a imagem e selecione o canvas.")
+            QtWidgets.QMessageBox.information(self, "Repaint Rows", "Import an image and select the canvas area first.")
             return
         if not self._cfg.main_colors or self._cfg.shades_panel_button_pos is None or self._cfg.back_button_pos is None:
-            QtWidgets.QMessageBox.information(self, "Retocar linhas", "Configure a paleta primeiro.")
+            QtWidgets.QMessageBox.information(self, "Repaint Rows", "Set up the color palette first.")
             return
         height = self._loaded.grid.h
         answer, ok = QtWidgets.QInputDialog.getText(
-            self, "Retocar linhas",
-            f"Informe linhas entre 1 e {height}. Exemplo: 32 ou 32-36."
+            self, "Repaint Rows",
+            f"Enter rows from 1 to {height}. Example: 32 or 32-36."
         )
         if not ok:
             return
         import re
         match = re.fullmatch(r"\s*(\d+)\s*(?:-\s*(\d+)\s*)?", answer)
         if match is None:
-            QtWidgets.QMessageBox.warning(self, "Retocar linhas", "Use 32 ou 32-36.")
+            QtWidgets.QMessageBox.warning(self, "Repaint Rows", "Use 32 or 32-36.")
             return
         start = int(match.group(1))
         end = int(match.group(2)) if match.group(2) else start
         if start < 1 or end > height or end < start:
-            QtWidgets.QMessageBox.warning(self, "Retocar linhas", f"Escolha linhas entre 1 e {height}.")
+            QtWidgets.QMessageBox.warning(self, "Repaint Rows", f"Choose rows between 1 and {height}.")
             return
         if not self._paint_countdown(seconds=3):
             return
@@ -1621,11 +1621,11 @@ class MainWindow(QtWidgets.QMainWindow):
         # O fim da fila não garante que o jogo registrou todos os pixels.
         self.progress.setValue(99)
         if getattr(self, "_repair_rows_mode", False):
-            msg = "Retoque das linhas enviado. Confira o resultado no jogo."
+            msg = "Row repaint finished. Check the result in-game."
         elif getattr(self, "_repair_mode", False):
-            msg = "Revisão enviada. Confira os detalhes no jogo."
+            msg = "Repair pass finished. Check the result in-game."
         else:
-            msg = "Comandos enviados. Confira o desenho no jogo; podem existir pixels faltando."
+            msg = "Paint commands sent. Check the canvas for missing pixels."
         self.statusBar().showMessage(msg, 15000)
         self._stop_esc_listener()
         self._hide_status_overlay()
@@ -1763,10 +1763,10 @@ class MainWindow(QtWidgets.QMainWindow):
                     opts.enable_drag_strokes = False
                     opts.mouse_down_s = max(0.035, opts.mouse_down_s)
                     opts.after_click_delay_s = max(0.065, opts.after_click_delay_s)
-                    signals.status.emit(f"Retocando linhas {first_row + 1} a {last_row + 1}...")
+                    signals.status.emit(f"Repainting rows {first_row + 1} to {last_row + 1}...")
                 if repair:
                     status_cb_early = lambda msg: signals.status.emit(str(msg))
-                    status_cb_early("Conferindo as cores do desenho...")
+                    status_cb_early("Checking canvas colors...")
                     missing = find_missing_pixels(
                         cfg=self._cfg,
                         canvas_rect=self._canvas_rect,
@@ -1779,7 +1779,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     if self._stop_flag:
                         signals.stopped.emit("Revisão interrompida")
                         return
-                    status_cb_early(f"Retocando {len(missing)} pixels diferentes da imagem")
+                    status_cb_early(f"Repainting {len(missing)} mismatched pixels")
                     if not missing:
                         signals.finished.emit()
                         return
