@@ -13,7 +13,7 @@ from .screen import get_screen_pixel_rgb
 from .config import AppConfig, MainColor, ShadeButton, default_config_path, load_config, save_config
 from .image_processing import PixelGrid, load_and_resize_to_grid
 from .overlay import Marker, MarkersOverlay, PointResult, PointSelectOverlay, RectResult, RectSelectOverlay, StatusOverlay
-from .paint import PainterOptions, erase_canvas, paint_grid, find_missing_pixels
+from .paint import PainterOptions, erase_canvas, paint_grid, find_missing_pixels, repaint_missing_pixels_offset
 
 
 ONE_TO_ONE_PRESET_NAME = "1:1"
@@ -1884,22 +1884,39 @@ class MainWindow(QtWidgets.QMainWindow):
                             drag_step_duration_s=opts.drag_step_duration_s,
                             after_drag_delay_s=opts.after_drag_delay_s,
                         )
-                        paint_grid(
-                            cfg=safe_cfg,
-                            canvas_rect=self._canvas_rect,
-                            grid_w=self._loaded.grid.w,
-                            grid_h=self._loaded.grid.h,
-                            get_pixel=get_pixel,
-                            options=safe_opts,
-                            paint_mode=self._cfg.paint_mode,
-                            skip=lambda x, y, missing=missing: (int(x), int(y)) not in missing,
-                            allow_bucket_fill=False,
-                            allow_region_bucket_fill=False,
-                            progress_cb=lambda x, y: signals.progress.emit(x, y),
-                            should_stop=lambda: self._stop_flag,
-                            status_cb=status_cb,
-                            verify_cb=verify_cb,
-                        )
+                        if attempt == 0:
+                            # First use a straightforward repaint of mismatched cells.
+                            paint_grid(
+                                cfg=safe_cfg,
+                                canvas_rect=self._canvas_rect,
+                                grid_w=self._loaded.grid.w,
+                                grid_h=self._loaded.grid.h,
+                                get_pixel=get_pixel,
+                                options=safe_opts,
+                                paint_mode=self._cfg.paint_mode,
+                                skip=lambda x, y, missing=missing: (int(x), int(y)) not in missing,
+                                allow_bucket_fill=False,
+                                allow_region_bucket_fill=False,
+                                progress_cb=lambda x, y: signals.progress.emit(x, y),
+                                should_stop=lambda: self._stop_flag,
+                                status_cb=status_cb,
+                                verify_cb=verify_cb,
+                            )
+                        else:
+                            # If the same cell still looks wrong, the initial
+                            # coordinate may lie on a non-paintable grid seam.
+                            repaint_missing_pixels_offset(
+                                cfg=safe_cfg,
+                                canvas_rect=self._canvas_rect,
+                                grid_w=self._loaded.grid.w,
+                                grid_h=self._loaded.grid.h,
+                                get_pixel=get_pixel,
+                                missing=missing,
+                                options=safe_opts,
+                                offset_y=1,
+                                should_stop=lambda: self._stop_flag,
+                                progress_cb=lambda x, y: signals.progress.emit(x, y),
+                            )
                         time.sleep(0.25)
                 except Exception as scan_error:
                     signals.status.emit(f"Final check unavailable: {scan_error}")
