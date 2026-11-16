@@ -1731,6 +1731,14 @@ class MainWindow(QtWidgets.QMainWindow):
                     after_drag_delay_s=float(getattr(self._cfg, "after_drag_delay_s", 0.02)),
                 )
 
+                # Dense grids need slower, independent clicks across all paths,
+                # including outline and verification repaints.
+                cw, ch = self._canvas_rect[2], self._canvas_rect[3]
+                if cw / self._loaded.grid.w < 4 or ch / self._loaded.grid.h < 4:
+                    opts.enable_drag_strokes = False
+                    opts.mouse_down_s = max(0.035, opts.mouse_down_s)
+                    opts.after_click_delay_s = max(0.065, opts.after_click_delay_s)
+
                 def get_pixel(x: int, y: int):
                     return self._loaded.grid.get(x, y)
 
