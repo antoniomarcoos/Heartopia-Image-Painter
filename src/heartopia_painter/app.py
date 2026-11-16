@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import copy
 import threading
 from dataclasses import dataclass
 from pathlib import Path
@@ -12,7 +13,7 @@ from .screen import get_screen_pixel_rgb
 from .config import AppConfig, MainColor, ShadeButton, default_config_path, load_config, save_config
 from .image_processing import PixelGrid, load_and_resize_to_grid
 from .overlay import Marker, MarkersOverlay, PointResult, PointSelectOverlay, RectResult, RectSelectOverlay, StatusOverlay
-from .paint import PainterOptions, erase_canvas, paint_grid
+from .paint import PainterOptions, erase_canvas, paint_grid, find_missing_pixels
 
 
 ONE_TO_ONE_PRESET_NAME = "1:1"
@@ -477,12 +478,14 @@ class MainWindow(QtWidgets.QMainWindow):
         rowp = QtWidgets.QHBoxLayout()
         self.btn_paint = QtWidgets.QPushButton("Paint now")
         self.btn_resume = QtWidgets.QPushButton("Resume")
+        self.btn_repair = QtWidgets.QPushButton("Revisar falhas")
         self.btn_resume.setEnabled(False)
         self.btn_erase = QtWidgets.QPushButton("Erase canvas")
         self.btn_stop = QtWidgets.QPushButton("Stop")
         self.btn_stop.setEnabled(False)
         rowp.addWidget(self.btn_paint)
         rowp.addWidget(self.btn_resume)
+        rowp.addWidget(self.btn_repair)
         rowp.addWidget(self.btn_erase)
         rowp.addWidget(self.btn_stop)
         paint_layout.addLayout(rowp)
@@ -511,6 +514,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_fix_swap_rb.clicked.connect(self._on_fix_swap_rb)
         self.btn_paint.clicked.connect(self._on_paint)
         self.btn_resume.clicked.connect(self._on_resume)
+        self.btn_repair.clicked.connect(self._on_repair)
         self.btn_erase.clicked.connect(self._on_erase)
         self.btn_stop.clicked.connect(self._on_stop)
 
@@ -1309,6 +1313,30 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self._start_paint_worker(resume=False)
 
+    def _on_repair(self) -> None:
+        if self._loaded is None or self._canvas_rect is None:
+            QtWidgets.QMessageBox.information(
+                self, "Revisar falhas", "Importe a imagem e selecione a área do desenho primeiro."
+            )
+            return
+        if not self._cfg.main_colors or self._cfg.shades_panel_button_pos is None or self._cfg.back_button_pos is None:
+            QtWidgets.QMessageBox.information(
+                self, "Revisar falhas", "Configure a paleta de cores antes de revisar."
+            )
+            return
+        if QtWidgets.QMessageBox.question(
+            self,
+            "Revisar falhas",
+            "Deixe o mesmo desenho aberto no jogo, sem mover a janela.\\n\\n"
+            "A revisão compara a tela com a imagem e pode retocar pixels que pareçam diferentes. "
+            "Deseja continuar?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+        ) != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if not self._paint_countdown(seconds=3):
+            return
+        self._start_paint_worker(resume=False, repair=True)
+
     def _on_erase(self) -> None:
         if self._canvas_rect is None:
             QtWidgets.QMessageBox.information(self, "Missing", "Select canvas area first.")
@@ -1376,8 +1404,11 @@ class MainWindow(QtWidgets.QMainWindow):
 
         self.btn_paint.setEnabled(False)
         self.btn_resume.setEnabled(False)
+        self.btn_repair.setEnabled(False)
         self.btn_erase.setEnabled(False)
         self.btn_stop.setEnabled(True)
+        self.progress.setValue(0)
+        self._repair_mode = repair
         self._stop_flag = False
         self._stop_reason = None
 
@@ -1549,21 +1580,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_paint_done(self):
         self.btn_paint.setEnabled(True)
+        self.btn_repair.setEnabled(True)
         self.btn_resume.setEnabled(False)
         self.btn_erase.setEnabled(True)
         self.btn_stop.setEnabled(False)
         # O fim da fila não garante que o jogo registrou todos os pixels.
         self.progress.setValue(99)
-        self.statusBar().showMessage(
-            "Comandos enviados. Confira o desenho no jogo; podem existir pixels faltando.",
-            15000,
-        )
+        if getattr(self, "_repair_mode", False):
+            msg = "Revisão enviada. Confira os detalhes no jogo."
+        else:
+            msg = "Comandos enviados. Confira o desenho no jogo; podem existir pixels faltando."
+        self.statusBar().showMessage(msg, 15000)
         self._stop_esc_listener()
         self._hide_status_overlay()
         self._reset_paint_session()
 
     def _on_paint_paused(self, msg: str) -> None:
         self.btn_paint.setEnabled(True)
+        self.btn_repair.setEnabled(True)
         self.btn_resume.setEnabled(True)
         self.btn_erase.setEnabled(True)
         self.btn_stop.setEnabled(False)
@@ -1574,6 +1608,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_paint_stopped(self, msg: str) -> None:
         self.btn_paint.setEnabled(True)
+        self.btn_repair.setEnabled(True)
         self.btn_resume.setEnabled(False)
         self.btn_erase.setEnabled(True)
         self.btn_stop.setEnabled(False)
@@ -1584,6 +1619,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_paint_error(self, msg: str):
         self.btn_paint.setEnabled(True)
+        self.btn_repair.setEnabled(True)
         self.btn_stop.setEnabled(False)
         self.btn_erase.setEnabled(True)
         self._stop_esc_listener()
@@ -1600,7 +1636,7 @@ class MainWindow(QtWidgets.QMainWindow):
             f"Error: {msg}",
         )
 
-    def _start_paint_worker(self, resume: bool) -> None:
+    def _start_paint_worker(self, resume: bool, repair: bool = False) -> None:
         if self._loaded is None or self._canvas_rect is None:
             return
 
@@ -1678,6 +1714,33 @@ class MainWindow(QtWidgets.QMainWindow):
                     return self._loaded.grid.get(x, y)
 
                 skip_fn = (lambda x, y: (int(x), int(y)) in self._paint_done) if resume else None
+                run_cfg = self._cfg
+                if repair:
+                    status_cb_early = lambda msg: signals.status.emit(str(msg))
+                    status_cb_early("Conferindo as cores do desenho...")
+                    missing = find_missing_pixels(
+                        cfg=self._cfg,
+                        canvas_rect=self._canvas_rect,
+                        grid_w=self._loaded.grid.w,
+                        grid_h=self._loaded.grid.h,
+                        get_pixel=get_pixel,
+                        should_stop=lambda: self._stop_flag,
+                    )
+                    if self._stop_flag:
+                        signals.stopped.emit("Revisão interrompida")
+                        return
+                    status_cb_early(f"Retocando {len(missing)} pixels diferentes da imagem")
+                    if not missing:
+                        signals.finished.emit()
+                        return
+                    skip_fn = lambda x, y: (int(x), int(y)) not in missing
+                    # Na revisão não usamos balde nem cliques rápidos: cada ponto é independente.
+                    run_cfg = copy.copy(self._cfg)
+                    run_cfg.verify_rows = False
+                    run_cfg.verify_streaming_enabled = False
+                    opts.enable_drag_strokes = False
+                    opts.mouse_down_s = max(0.035, opts.mouse_down_s)
+                    opts.after_click_delay_s = max(0.065, opts.after_click_delay_s)
 
                 def status_cb(msg: str) -> None:
                     try:
@@ -1701,7 +1764,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         pass
 
                 paint_grid(
-                    cfg=self._cfg,
+                    cfg=run_cfg,
                     canvas_rect=self._canvas_rect,
                     grid_w=self._loaded.grid.w,
                     grid_h=self._loaded.grid.h,
@@ -1709,8 +1772,8 @@ class MainWindow(QtWidgets.QMainWindow):
                     options=opts,
                     paint_mode=self._cfg.paint_mode,
                     skip=skip_fn,
-                    allow_bucket_fill=(not resume),
-                    allow_region_bucket_fill=(not resume) or (self._paint_base_bucket_key is not None),
+                    allow_bucket_fill=(not resume and not repair),
+                    allow_region_bucket_fill=(not repair) and ((not resume) or (self._paint_base_bucket_key is not None)),
                     resume_base_bucket_key=(
                         (self._paint_base_bucket_key[0], self._paint_base_bucket_key[1])
                         if resume and self._paint_base_bucket_key is not None
