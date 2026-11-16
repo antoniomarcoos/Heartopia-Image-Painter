@@ -386,8 +386,10 @@ def _cell_center(canvas_rect: Tuple[int, int, int, int], grid_w: int, grid_h: in
     top = y0 + (y * h) // grid_h
     bottom = y0 + ((y + 1) * h) // grid_h - 1
 
-    cx = (left + max(left, right) + 1) // 2
-    cy = (top + max(top, bottom) + 1) // 2
+    # If a cell is only two physical pixels tall, rounding upwards picks
+    # its bottom edge. The game can interpret that position as a grid line.
+    cx = (left + max(left, right)) // 2
+    cy = (top + max(top, bottom)) // 2
     return (cx, cy)
 
 
@@ -1054,8 +1056,12 @@ def repaint_missing_pixels_offset(
                 x0, y0, w, h = canvas_rect
                 top = y0 + (y * h) // grid_h
                 bottom = y0 + ((y + 1) * h) // grid_h - 1
-                # Keep the retry inside this cell's own integer-pixel bounds.
-                retry_y = min(max(cy + offset_y, top), max(top, bottom))
+                # Retry at a genuinely different point whenever the cell
+                # contains at least two physical screen pixels.
+                candidate = cy + offset_y
+                if candidate < top or candidate > bottom:
+                    candidate = bottom if cy != bottom else top
+                retry_y = min(max(candidate, top), max(top, bottom))
                 _tap((cx, retry_y), options, before_down_delay_s=0.04)
                 if progress_cb is not None:
                     progress_cb(x, y)
