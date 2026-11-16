@@ -1330,7 +1330,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if QtWidgets.QMessageBox.question(
             self,
             "Repair Missing Pixels",
-            "Deixe o mesmo desenho aberto no jogo, sem mover a janela.\n\n"
+            "Keep the same canvas open in-game without moving the window.\n\n"
             "The tool compares the screen with your image and may repaint cells that look different. "
             "Continue?",
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
@@ -1777,7 +1777,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         status_cb=status_cb_early,
                     )
                     if self._stop_flag:
-                        signals.stopped.emit("Revisão interrompida")
+                        signals.stopped.emit("Repair stopped")
                         return
                     status_cb_early(f"Repainting {len(missing)} mismatched pixels")
                     if not missing:
