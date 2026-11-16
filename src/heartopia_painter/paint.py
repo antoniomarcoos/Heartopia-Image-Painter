@@ -971,35 +971,55 @@ def find_missing_pixels(
     grid_h: int,
     get_pixel: Callable[[int, int], RGB],
     should_stop: Optional[Callable[[], bool]] = None,
+    status_cb: Optional[Callable[[str], None]] = None,
 ) -> set[Tuple[int, int]]:
-    """Compara as cores do desenho com o que aparece no editor do jogo.
+    """Encontra células diferentes usando uma única captura da área de desenho."""
+    import mss
 
-    Usa a mesma paleta da pintura. A comparação é aproximada, pois o jogo
-    pode mudar levemente o RGB exibido na tela.
-    """
-    missing: set[Tuple[int, int]] = set()
+    x0, y0, width, height = canvas_rect
+    if width <= 0 or height <= 0 or grid_w <= 0 or grid_h <= 0:
+        raise ValueError("Área de desenho inválida. Selecione o canvas novamente.")
+
     tolerance = max(15, int(getattr(cfg, "verify_tolerance", 35)))
     tolerance2 = tolerance * tolerance
-    matches: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+    missing: set[Tuple[int, int]] = set()
+    desired_matches: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+    actual_matches: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
 
-    # A captura deve acontecer antes de mover o mouse ou pintar qualquer pixel.
+    # Capturar o canvas inteiro evita abrir o capturador milhares de vezes.
+    with mss.mss() as sct:
+        screenshot = sct.grab({
+            "left": int(x0), "top": int(y0),
+            "width": int(width), "height": int(height),
+        })
+        rgb = screenshot.rgb
+
+    row_bytes = width * 3
     for y in range(grid_h):
+        if should_stop and should_stop():
+            return missing
+        if status_cb is not None and (y % 10 == 0 or y == grid_h - 1):
+            status_cb(f"Conferindo o desenho: {y + 1}/{grid_h} linhas")
         for x in range(grid_w):
-            if should_stop and should_stop():
-                return missing
             desired = get_pixel(x, y)
-            if desired not in matches:
-                matches[desired] = _find_best_match(desired, cfg)
-            match = matches[desired]
+            if desired not in desired_matches:
+                desired_matches[desired] = _find_best_match(desired, cfg)
+            match = desired_matches[desired]
             if match is None:
                 continue
-            _main, shade = match
-            cx, cy = _cell_center(canvas_rect, grid_w, grid_h, x, y)
-            actual = get_screen_pixel_rgb(cx, cy)
+            _, shade = match
+            # Mesma conta de centro usada na pintura, mas relativa à captura.
+            cx = int(x0 + (x + 0.5) * width / grid_w) - x0
+            cy = int(y0 + (y + 0.5) * height / grid_h) - y0
+            cx = max(0, min(width - 1, cx))
+            cy = max(0, min(height - 1, cy))
+            offset = cy * row_bytes + cx * 3
+            actual = (rgb[offset], rgb[offset + 1], rgb[offset + 2])
             if _dist2(actual, shade.rgb) <= tolerance2:
                 continue
-            # Evita retocar à toa quando a iluminação muda a cor da tela.
-            nearest = _find_best_match(actual, cfg)
+            if actual not in actual_matches:
+                actual_matches[actual] = _find_best_match(actual, cfg)
+            nearest = actual_matches[actual]
             if nearest is not None and nearest[1].rgb == shade.rgb:
                 continue
             missing.add((x, y))
