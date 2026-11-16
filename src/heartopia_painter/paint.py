@@ -998,7 +998,7 @@ def _verify_and_repair_color_group(
     )
 
 
-def repaint_missing_pixels_offset(
+def repaint_missing_pixels_drag(
     cfg: AppConfig,
     canvas_rect: Tuple[int, int, int, int],
     grid_w: int,
@@ -1006,22 +1006,21 @@ def repaint_missing_pixels_offset(
     get_pixel: Callable[[int, int], RGB],
     missing: set[Tuple[int, int]],
     options: PainterOptions,
-    offset_y: int,
     should_stop: Optional[Callable[[], bool]] = None,
     progress_cb: Optional[Callable[[int, int], None]] = None,
 ) -> None:
-    """Retry stubborn pixels slightly above/below their previous click positions.
+    """Repaint adjacent missed cells by holding the mouse button and dragging.
 
-    Never crosses an approximate cell boundary. This helps when a 150x150
-    cell lies over a grid seam and the cursor reaches it without painting.
+    Only connect horizontally adjacent cells with exactly the same shade.
+    This uses actual mouse-drag events instead of repeated click attempts.
     """
     if not missing:
         return
     if cfg.paint_tool_button_pos is None:
         raise RuntimeError("Paint tool button has not been configured")
 
-    groups: Dict[Tuple[str, Point], Tuple[MainColor, ShadeButton, List[Tuple[int, int]]]] = {}
     matched: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+    groups: Dict[Tuple[str, Point], Tuple[MainColor, ShadeButton, List[Tuple[int, int]]]] = {}
     for x, y in sorted(missing, key=lambda xy: (xy[1], xy[0])):
         rgb = get_pixel(x, y)
         if rgb not in matched:
@@ -1035,43 +1034,61 @@ def repaint_missing_pixels_offset(
             groups[key] = (main, shade, [])
         groups[key][2].append((x, y))
 
-    last_main: Optional[MainColor] = None
-    last_shade: Optional[ShadeButton] = None
-    panel_open = False
-    try:
-        for main, shade, coords in sorted(groups.values(), key=lambda item: -len(item[2])):
+    drag_opts = PainterOptions(
+        move_duration_s=max(0.04, options.move_duration_s),
+        mouse_down_s=max(0.08, options.mouse_down_s),
+        after_click_delay_s=max(0.11, options.after_click_delay_s),
+        panel_open_delay_s=options.panel_open_delay_s,
+        shade_select_delay_s=options.shade_select_delay_s,
+        row_delay_s=options.row_delay_s,
+        enable_drag_strokes=True,
+        drag_step_duration_s=max(0.055, options.drag_step_duration_s),
+        after_drag_delay_s=max(0.12, options.after_drag_delay_s),
+    )
+
+    for main, shade, coords in sorted(groups.values(), key=lambda item: -len(item[2])):
+        if should_stop and should_stop():
+            return
+        # Select shade afresh for each group and close the palette before painting.
+        _, _, panel_open = _select_shade(
+            cfg, drag_opts, main, shade, None, None, False
+        )
+        if panel_open and cfg.back_button_pos is not None:
+            _tap(cfg.back_button_pos, drag_opts)
+        _tap(cfg.paint_tool_button_pos, drag_opts)
+
+        coords.sort(key=lambda item: (item[1], item[0]))
+        run: List[Tuple[int, int]] = []
+        def paint_run(points_in_run: List[Tuple[int, int]]) -> None:
+            if not points_in_run or (should_stop and should_stop()):
+                return
+            points = [
+                _cell_center(canvas_rect, grid_w, grid_h, x, y)
+                for x, y in points_in_run
+            ]
+            if len(points) >= 2:
+                _stroke(points, drag_opts, should_stop=should_stop)
+            else:
+                # A one-cell drag still creates a held-button movement event.
+                x, y = points_in_run[0]
+                x0, y0, w, h = canvas_rect
+                cx, cy = points[0]
+                right = x0 + ((x + 1) * w) // grid_w - 1
+                left = x0 + (x * w) // grid_w
+                target = (right if cx < right else max(left, cx - 1), cy)
+                _stroke([points[0], target], drag_opts, should_stop=should_stop)
+            if progress_cb:
+                for x, y in points_in_run:
+                    progress_cb(x, y)
+
+        for x, y in coords:
             if should_stop and should_stop():
                 return
-            last_main, last_shade, panel_open = _select_shade(
-                cfg, options, main, shade, last_main, last_shade, panel_open
-            )
-            if panel_open and cfg.back_button_pos is not None:
-                _tap(cfg.back_button_pos, options)
-                panel_open = False
-            _tap(cfg.paint_tool_button_pos, options)
-            for x, y in coords:
-                if should_stop and should_stop():
-                    return
-                cx, cy = _cell_center(canvas_rect, grid_w, grid_h, x, y)
-                x0, y0, w, h = canvas_rect
-                top = y0 + (y * h) // grid_h
-                bottom = y0 + ((y + 1) * h) // grid_h - 1
-                # Retry at a genuinely different point whenever the cell
-                # contains at least two physical screen pixels.
-                candidate = cy + offset_y
-                if candidate < top or candidate > bottom:
-                    candidate = bottom if cy != bottom else top
-                retry_y = min(max(candidate, top), max(top, bottom))
-                _tap((cx, retry_y), options, before_down_delay_s=0.04)
-                if progress_cb is not None:
-                    progress_cb(x, y)
-            # Reset selection tracking between groups, matching the main painter.
-            last_main = None
-            last_shade = None
-    finally:
-        # Ensure no shades panel remains over the canvas.
-        if panel_open and cfg.back_button_pos is not None:
-            _tap(cfg.back_button_pos, options)
+            if run and (y != run[-1][1] or x != run[-1][0] + 1):
+                paint_run(run)
+                run = []
+            run.append((x, y))
+        paint_run(run)
 
 
 def find_missing_pixels(
