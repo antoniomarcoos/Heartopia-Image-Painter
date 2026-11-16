@@ -93,6 +93,7 @@ class WorkerSignals(QtCore.QObject):
     verify_cell = QtCore.Signal(int, int)
     bucket_base = QtCore.Signal(str, int, int, int, int, int)
     finished = QtCore.Signal()
+    paint_result = QtCore.Signal(bool, int)
     error = QtCore.Signal(str)
     paused = QtCore.Signal(str)
     stopped = QtCore.Signal(str)
@@ -167,6 +168,7 @@ class MainWindow(QtWidgets.QMainWindow):
         # Status overlay contains replica canvas + cursors; nothing else to stop.
 
     def _on_worker_status(self, msg: str) -> None:
+        self.statusBar().showMessage(str(msg))
         if not bool(getattr(self._cfg, "status_overlay_enabled", True)):
             return
         ov = self._ensure_status_overlay()
@@ -1578,16 +1580,18 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception:
                 pass
 
-    def _on_paint_done(self):
+    def _on_paint_done(self, verified: bool = False, remaining: int = -1):
         self.btn_paint.setEnabled(True)
         self.btn_repair.setEnabled(True)
         self.btn_resume.setEnabled(False)
         self.btn_erase.setEnabled(True)
         self.btn_stop.setEnabled(False)
-        # O fim da fila não garante que o jogo registrou todos os pixels.
-        self.progress.setValue(99)
-        if getattr(self, "_repair_mode", False):
-            msg = "Repair pass finished. Check the result in-game."
+        # 100% means the final screen scan found no mismatched cells.
+        self.progress.setValue(100 if verified else 99)
+        if verified:
+            msg = "100% - Canvas checked. No missing pixels detected."
+        elif remaining >= 0:
+            msg = f"Paint finished, but {remaining} pixels still look different. Try Repair Missing Pixels."
         else:
             msg = "Paint commands sent. Check the canvas for missing pixels."
         self.statusBar().showMessage(msg, 15000)
@@ -1712,7 +1716,7 @@ class MainWindow(QtWidgets.QMainWindow):
         signals.status.connect(self._on_worker_status, qc)
         signals.verify_cell.connect(self._on_worker_verify_cell, qc)
         signals.bucket_base.connect(self._on_worker_bucket_base, qc)
-        signals.finished.connect(self._on_paint_done, qc)
+        signals.paint_result.connect(self._on_paint_done, qc)
         signals.error.connect(self._on_paint_error, qc)
         signals.paused.connect(self._on_paint_paused, qc)
         signals.stopped.connect(self._on_paint_stopped, qc)
@@ -1761,7 +1765,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         return
                     status_cb_early(f"Repainting {len(missing)} mismatched pixels")
                     if not missing:
-                        signals.finished.emit()
+                        signals.paint_result.emit(True, 0)
                         return
                     skip_fn = lambda x, y: (int(x), int(y)) not in missing
                     # Na revisão não usamos balde nem cliques rápidos: cada ponto é independente.
@@ -1827,7 +1831,87 @@ class MainWindow(QtWidgets.QMainWindow):
                         signals.stopped.emit("Stopped")
                         return
 
-                signals.finished.emit()
+                # Verify all cells after painting, including bucket-filled areas
+                # and colors previously marked complete by streaming verification.
+                import time
+                time.sleep(0.25)
+                remaining = -1
+                try:
+                    # At most two targeted correction passes; never bucket-fill again.
+                    for attempt in range(3):
+                        if self._stop_flag:
+                            break
+                        signals.status.emit(
+                            f"Final canvas check ({attempt + 1}/3)..."
+                        )
+                        missing = find_missing_pixels(
+                            cfg=self._cfg,
+                            canvas_rect=self._canvas_rect,
+                            grid_w=self._loaded.grid.w,
+                            grid_h=self._loaded.grid.h,
+                            get_pixel=get_pixel,
+                            should_stop=lambda: self._stop_flag,
+                            status_cb=None,
+                        )
+                        remaining = len(missing)
+                        if remaining == 0:
+                            break
+                        if attempt == 2:
+                            break
+
+                        # If the majority of cells differ, screen alignment or
+                        # palette sampling is likely wrong. Avoid damaging the canvas.
+                        if remaining > (total // 3):
+                            signals.status.emit(
+                                f"Final check found {remaining} differences. "
+                                "Check canvas alignment before repairing."
+                            )
+                            break
+                        signals.status.emit(
+                            f"Repainting {remaining} pixels found by the final check..."
+                        )
+                        safe_cfg = copy.copy(self._cfg)
+                        safe_cfg.verify_rows = False
+                        safe_cfg.verify_streaming_enabled = False
+                        safe_opts = PainterOptions(
+                            move_duration_s=max(0.025, opts.move_duration_s),
+                            mouse_down_s=max(0.045, opts.mouse_down_s),
+                            after_click_delay_s=max(0.09, opts.after_click_delay_s),
+                            panel_open_delay_s=opts.panel_open_delay_s,
+                            shade_select_delay_s=opts.shade_select_delay_s,
+                            row_delay_s=opts.row_delay_s,
+                            enable_drag_strokes=False,
+                            drag_step_duration_s=opts.drag_step_duration_s,
+                            after_drag_delay_s=opts.after_drag_delay_s,
+                        )
+                        paint_grid(
+                            cfg=safe_cfg,
+                            canvas_rect=self._canvas_rect,
+                            grid_w=self._loaded.grid.w,
+                            grid_h=self._loaded.grid.h,
+                            get_pixel=get_pixel,
+                            options=safe_opts,
+                            paint_mode=self._cfg.paint_mode,
+                            skip=lambda x, y, missing=missing: (int(x), int(y)) not in missing,
+                            allow_bucket_fill=False,
+                            allow_region_bucket_fill=False,
+                            progress_cb=lambda x, y: signals.progress.emit(x, y),
+                            should_stop=lambda: self._stop_flag,
+                            status_cb=status_cb,
+                            verify_cb=verify_cb,
+                        )
+                        time.sleep(0.25)
+                except Exception as scan_error:
+                    signals.status.emit(f"Final check unavailable: {scan_error}")
+
+                if self._stop_flag:
+                    if self._stop_reason == "pause":
+                        signals.paused.emit("Paused (ESC)")
+                    else:
+                        signals.stopped.emit("Stopped")
+                    return
+
+                signals.paint_result.emit(remaining == 0, remaining)
             except Exception as e:
                 signals.error.emit(str(e))
 
