@@ -1948,7 +1948,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                 f"Row {yy + 1}: {count}/{self._loaded.grid.w}"
                             )
                         report_path.write_text(
-                            "\\n".join(report_lines) + "\\n",
+                            "\n".join(report_lines) + "\n",
                             encoding="utf-8",
                         )
                         signals.status.emit(f"Final scan report: {report_path}")
