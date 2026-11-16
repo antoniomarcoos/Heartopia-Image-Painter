@@ -1928,6 +1928,33 @@ class MainWindow(QtWidgets.QMainWindow):
                         signals.stopped.emit("Stopped")
                     return
 
+                # Record which rows are still mismatched. The report contains
+                # only dimensions, positions and counts, never the user's image.
+                if remaining > 0 and not self._stop_flag:
+                    try:
+                        from collections import Counter
+                        counts = Counter(y for _x, y in missing)
+                        report_path = Path.cwd() / "heartopia-paint-diagnostic.txt"
+                        report_lines = [
+                            "Heartopia Image Painter - final scan",
+                            f"Canvas rectangle (screen pixels): {self._canvas_rect}",
+                            f"Game window rectangle: {self._game_window_rect}",
+                            f"Grid: {self._loaded.grid.w}x{self._loaded.grid.h}",
+                            f"Unmatched cells: {remaining}",
+                            "Rows (1-based): count / grid width",
+                        ]
+                        for yy, count in sorted(counts.items(), key=lambda entry: (-entry[1], entry[0])):
+                            report_lines.append(
+                                f"Row {yy + 1}: {count}/{self._loaded.grid.w}"
+                            )
+                        report_path.write_text(
+                            "\\n".join(report_lines) + "\\n",
+                            encoding="utf-8",
+                        )
+                        signals.status.emit(f"Final scan report: {report_path}")
+                    except Exception as report_error:
+                        signals.status.emit(f"Could not save diagnostic report: {report_error}")
+
                 signals.paint_result.emit(remaining == 0, remaining)
             except Exception as e:
                 signals.error.emit(str(e))
