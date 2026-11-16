@@ -148,3 +148,16 @@ Resetting:
 - Painting is currently a simple per-cell click approach.
 - Color matching is “closest configured shade” (RGB distance).
 
+
+## Revisar falhas (versão de teste)
+
+Depois que a pintura terminar, use **Revisar falhas** para conferir o desenho aberto no jogo e tentar retocar apenas os pixels diferentes da imagem original.
+
+1. Mantenha no Heartopia a mesma imagem, a mesma paleta e a mesma área do canvas.
+2. Não altere a posição nem o tamanho da janela.
+3. Clique em **Revisar falhas** e volte para o jogo durante a contagem.
+4. Confira o resultado antes de salvar.
+
+A revisão usa uma comparação aproximada de cores. Ela pode deixar passar pixels ou marcar alguns pixels corretos para retoque, especialmente com grade pequena, efeitos visuais ou coordenadas desalinhadas. Por segurança, não usa preenchimento por balde.
+
+A barra em 99% indica que os comandos terminaram; não é uma confirmação de que todos os pixels foram gravados pelo jogo. O arquivo `config.json` existente não precisa ser alterado para usar a revisão.
