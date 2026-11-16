@@ -1410,9 +1410,7 @@ def paint_grid(
             if options.enable_drag_strokes and run_len >= 2:
                 pts: List[Point] = []
                 for xx in range(run_start, run_end + 1):
-                    cx = int(x0 + (xx + 0.5) * cell_w)
-                    cy = int(y0 + (y + 0.5) * cell_h)
-                    pts.append((cx, cy))
+                    pts.append(_cell_center(canvas_rect, grid_w, grid_h, xx, y))
                 _rapid_click_stroke(pts, options, should_stop=should_stop)
                 if progress_cb:
                     for xx in range(run_start, run_end + 1):
@@ -1423,9 +1421,7 @@ def paint_grid(
                     _stream_verify_flush(force=False)
             else:
                 for xx in range(run_start, run_end + 1):
-                    cx = int(x0 + (xx + 0.5) * cell_w)
-                    cy = int(y0 + (y + 0.5) * cell_h)
-                    _tap((cx, cy), options)
+                    _tap(_cell_center(canvas_rect, grid_w, grid_h, xx, y), options)
                     if progress_cb:
                         progress_cb(xx, y)
                     if streaming:
