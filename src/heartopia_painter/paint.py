@@ -29,12 +29,23 @@ class PainterOptions:
     after_drag_delay_s: float = 0.02
 
 
-def _tap(pos: Point, opts: PainterOptions, extra_delay_s: float = 0.0):
-    # Move + mouseDown/mouseUp is more reliable for some games than pyautogui.click().
+def _tap(
+    pos: Point,
+    opts: PainterOptions,
+    extra_delay_s: float = 0.0,
+    before_down_delay_s: float = 0.0,
+):
+    # Moving the cursor and pressing immediately can drop input in the game.
+    # Keep motion, press and release as separate input events.
     pyautogui.moveTo(pos[0], pos[1], duration=max(0.0, float(opts.move_duration_s)))
+    if before_down_delay_s > 0:
+        time.sleep(float(before_down_delay_s))
     pyautogui.mouseDown(button="left")
-    time.sleep(max(0.0, float(opts.mouse_down_s)))
-    pyautogui.mouseUp(button="left")
+    try:
+        time.sleep(max(0.0, float(opts.mouse_down_s)))
+    finally:
+        # Always release the button if an error happens during the press.
+        pyautogui.mouseUp(button="left")
     time.sleep(max(0.0, float(opts.after_click_delay_s) + float(extra_delay_s)))
 
 
@@ -507,9 +518,9 @@ def _paint_coord_runs(
     if dense_grid:
         # Keep the user's config unchanged: apply safer timing only to this run.
         options = PainterOptions(
-            move_duration_s=max(0.015, float(options.move_duration_s)),
-            mouse_down_s=max(0.035, float(options.mouse_down_s)),
-            after_click_delay_s=max(0.065, float(options.after_click_delay_s)),
+            move_duration_s=max(0.025, float(options.move_duration_s)),
+            mouse_down_s=max(0.075, float(options.mouse_down_s)),
+            after_click_delay_s=max(0.10, float(options.after_click_delay_s)),
             panel_open_delay_s=float(options.panel_open_delay_s),
             shade_select_delay_s=float(options.shade_select_delay_s),
             row_delay_s=float(options.row_delay_s),
@@ -554,7 +565,7 @@ def _paint_coord_runs(
             for (rx, ry), p in zip(run, pts):
                 if should_stop and should_stop():
                     return
-                _tap(p, options)
+                _tap(p, options, before_down_delay_s=0.035 if dense_grid else 0.0)
                 if progress_cb:
                     progress_cb(int(rx), int(ry))
 
