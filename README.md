@@ -161,3 +161,16 @@ Depois que a pintura terminar, use **Revisar falhas** para conferir o desenho ab
 A revisão usa uma comparação aproximada de cores. Ela pode deixar passar pixels ou marcar alguns pixels corretos para retoque, especialmente com grade pequena, efeitos visuais ou coordenadas desalinhadas. Por segurança, não usa preenchimento por balde.
 
 A barra em 99% indica que os comandos terminaram; não é uma confirmação de que todos os pixels foram gravados pelo jogo. O arquivo `config.json` existente não precisa ser alterado para usar a revisão.
+
+## Retocar linhas horizontais
+
+Se uma faixa horizontal não aparecer, use **Retocar linhas** em vez de repetir a pintura inteira.
+
+1. Mantenha a mesma imagem e a mesma área selecionada no Heartopia.
+2. Clique em **Retocar linhas**.
+3. Digite o número de uma linha (por exemplo, `32`) ou um intervalo (`32-36`).
+4. Volte ao jogo durante a contagem para o programa repintar a faixa.
+
+A numeração começa em 1, de cima para baixo. Em um desenho de 150×150, existem 150 linhas. Essa função não tenta adivinhar quais linhas falharam: ela repinta exatamente as escolhidas usando as cores da imagem, sem balde. O `config.json` não é alterado por essa função.
+
+**Atenção:** se a área selecionada estiver desalinhada, o retoque também ficará. Antes de testar uma faixa grande, tente uma linha só.
