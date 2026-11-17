@@ -1900,7 +1900,49 @@ class MainWindow(QtWidgets.QMainWindow):
                             drag_step_duration_s=opts.drag_step_duration_s,
                             after_drag_delay_s=opts.after_drag_delay_s,
                         )
-                        if attempt == 0:
+                        # Rebuild badly missed horizontal rows through the
+                        # independent Paint-by-Row path. This avoids repeating
+                        # the same Paint-by-Color grouping that left stripes.
+                        from collections import Counter
+                        rows = Counter(y for _x, y in missing)
+                        striped_rows = {
+                            y for y, count in rows.items()
+                            if count >= max(12, int(self._loaded.grid.w * 0.55))
+                        }
+                        if striped_rows and len(striped_rows) <= max(4, self._loaded.grid.h // 8):
+                            signals.status.emit(
+                                f"Repairing {len(striped_rows)} incomplete rows..."
+                            )
+                            row_opts = PainterOptions(
+                                move_duration_s=max(0.03, opts.move_duration_s),
+                                mouse_down_s=max(0.075, opts.mouse_down_s),
+                                after_click_delay_s=max(0.10, opts.after_click_delay_s),
+                                panel_open_delay_s=opts.panel_open_delay_s,
+                                shade_select_delay_s=opts.shade_select_delay_s,
+                                row_delay_s=opts.row_delay_s,
+                                enable_drag_strokes=False,
+                                drag_step_duration_s=opts.drag_step_duration_s,
+                                after_drag_delay_s=opts.after_drag_delay_s,
+                            )
+                            paint_grid(
+                                cfg=safe_cfg,
+                                canvas_rect=self._canvas_rect,
+                                grid_w=self._loaded.grid.w,
+                                grid_h=self._loaded.grid.h,
+                                get_pixel=get_pixel,
+                                options=row_opts,
+                                paint_mode="row",
+                                skip=lambda x, y, rows=striped_rows: y not in rows,
+                                allow_bucket_fill=False,
+                                allow_region_bucket_fill=False,
+                                progress_cb=lambda x, y: signals.progress.emit(x, y),
+                                should_stop=lambda: self._stop_flag,
+                                status_cb=status_cb,
+                                verify_cb=verify_cb,
+                            )
+                            # Refresh the screen check on the next pass instead
+                            # of immediately painting the same rows again.
+                        elif attempt == 0:
                             # First use a straightforward repaint of mismatched cells.
                             paint_grid(
                                 cfg=safe_cfg,
