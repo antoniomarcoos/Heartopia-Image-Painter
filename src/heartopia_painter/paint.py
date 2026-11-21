@@ -29,12 +29,23 @@ class PainterOptions:
     after_drag_delay_s: float = 0.02
 
 
-def _tap(pos: Point, opts: PainterOptions, extra_delay_s: float = 0.0):
-    # Move + mouseDown/mouseUp is more reliable for some games than pyautogui.click().
+def _tap(
+    pos: Point,
+    opts: PainterOptions,
+    extra_delay_s: float = 0.0,
+    before_down_delay_s: float = 0.0,
+):
+    # Moving the cursor and pressing immediately can drop input in the game.
+    # Keep motion, press and release as separate input events.
     pyautogui.moveTo(pos[0], pos[1], duration=max(0.0, float(opts.move_duration_s)))
+    if before_down_delay_s > 0:
+        time.sleep(float(before_down_delay_s))
     pyautogui.mouseDown(button="left")
-    time.sleep(max(0.0, float(opts.mouse_down_s)))
-    pyautogui.mouseUp(button="left")
+    try:
+        time.sleep(max(0.0, float(opts.mouse_down_s)))
+    finally:
+        # Always release the button if an error happens during the press.
+        pyautogui.mouseUp(button="left")
     time.sleep(max(0.0, float(opts.after_click_delay_s) + float(extra_delay_s)))
 
 
@@ -124,8 +135,15 @@ def _rapid_click_stroke(
     if not points:
         return
 
-    per_click_delay = max(0.0, float(opts.drag_step_duration_s))
+    # Cliques rápidos também precisam respeitar o atraso normal.
+    # Sem isso, o jogo pode ignorar alguns pixels de uma mesma linha.
+    per_click_delay = max(
+        0.04,
+        float(opts.drag_step_duration_s),
+        float(opts.after_click_delay_s),
+    )
     after_stroke_delay = max(0.0, float(opts.after_drag_delay_s))
+    hold_s = max(0.025, float(opts.mouse_down_s))
 
     for idx, (px, py) in enumerate(points):
         if should_stop and should_stop():
@@ -133,8 +151,7 @@ def _rapid_click_stroke(
         # Move as fast as possible; rely on per-click delay for stability.
         pyautogui.moveTo(px, py, duration=0)
         pyautogui.mouseDown(button="left")
-        if opts.mouse_down_s > 0:
-            time.sleep(max(0.0, float(opts.mouse_down_s)))
+        time.sleep(hold_s)
         pyautogui.mouseUp(button="left")
         if per_click_delay > 0:
             time.sleep(per_click_delay)
@@ -357,11 +374,22 @@ def _ui_sanity_check_at(
 
 
 def _cell_center(canvas_rect: Tuple[int, int, int, int], grid_w: int, grid_h: int, x: int, y: int) -> Point:
+    """Choose a pixel inside the cell, away from grid borders when possible."""
     x0, y0, w, h = canvas_rect
-    cell_w = w / grid_w
-    cell_h = h / grid_h
-    cx = int(x0 + (x + 0.5) * cell_w)
-    cy = int(y0 + (y + 0.5) * cell_h)
+    if grid_w <= 0 or grid_h <= 0:
+        raise ValueError("Invalid canvas grid dimensions")
+
+    # Work in integer screen pixels to avoid floating-point rounding differences
+    # between the paint and verification paths.
+    left = x0 + (x * w) // grid_w
+    right = x0 + ((x + 1) * w) // grid_w - 1
+    top = y0 + (y * h) // grid_h
+    bottom = y0 + ((y + 1) * h) // grid_h - 1
+
+    # If a cell is only two physical pixels tall, rounding upwards picks
+    # its bottom edge. The game can interpret that position as a grid line.
+    cx = (left + max(left, right)) // 2
+    cy = (top + max(top, bottom)) // 2
     return (cx, cy)
 
 
@@ -487,8 +515,21 @@ def _paint_coord_runs(
         return
 
     x0, y0, w, h = canvas_rect
-    cell_w = w / grid_w
-    cell_h = h / grid_h
+    # Very small cells are more susceptible to missed clicks and grid borders.
+    dense_grid = (w / grid_w) < 4.0 or (h / grid_h) < 4.0
+    if dense_grid:
+        # Keep the user's config unchanged: apply safer timing only to this run.
+        options = PainterOptions(
+            move_duration_s=max(0.025, float(options.move_duration_s)),
+            mouse_down_s=max(0.075, float(options.mouse_down_s)),
+            after_click_delay_s=max(0.10, float(options.after_click_delay_s)),
+            panel_open_delay_s=float(options.panel_open_delay_s),
+            shade_select_delay_s=float(options.shade_select_delay_s),
+            row_delay_s=float(options.row_delay_s),
+            enable_drag_strokes=False,
+            drag_step_duration_s=float(options.drag_step_duration_s),
+            after_drag_delay_s=float(options.after_drag_delay_s),
+        )
 
     coords.sort(key=lambda xy: (xy[1], xy[0]))
     i = 0
@@ -505,11 +546,10 @@ def _paint_coord_runs(
             run.append((nx, ny))
             j += 1
 
-        pts: List[Point] = []
-        for rx, ry in run:
-            cx = int(x0 + (rx + 0.5) * cell_w)
-            cy = int(y0 + (ry + 0.5) * cell_h)
-            pts.append((cx, cy))
+        pts: List[Point] = [
+            _cell_center(canvas_rect, grid_w, grid_h, rx, ry)
+            for rx, ry in run
+        ]
 
         if options.enable_drag_strokes and len(pts) >= 2:
             if progress_cb:
@@ -527,7 +567,7 @@ def _paint_coord_runs(
             for (rx, ry), p in zip(run, pts):
                 if should_stop and should_stop():
                     return
-                _tap(p, options)
+                _tap(p, options, before_down_delay_s=0.035 if dense_grid else 0.0)
                 if progress_cb:
                     progress_cb(int(rx), int(ry))
 
@@ -775,6 +815,11 @@ def _verify_and_repair_row(
                 in_shades_panel,
             )
 
+            # Painting with the shade chooser still open can intercept canvas clicks.
+            if in_shades_panel:
+                _tap(cfg.back_button_pos, options)
+                in_shades_panel = False
+
             xs.sort()
             # Break into contiguous runs so we can use the fast stroke option.
             run: List[int] = []
@@ -908,6 +953,11 @@ def _verify_and_repair_color_group(
             in_shades_panel,
         )
 
+        # Close the chooser before any repair click reaches the canvas.
+        if in_shades_panel:
+            _tap(cfg.back_button_pos, options)
+            in_shades_panel = False
+
         # Repaint mismatches, using contiguous horizontal runs for speed.
         mismatches.sort(key=lambda xy: (xy[1], xy[0]))
         i = 0
@@ -956,6 +1006,163 @@ def _verify_and_repair_color_group(
         "Color verification failed for a shade group. "
         "Try increasing Verify tolerance or timing, or disable verification."
     )
+
+
+def repaint_missing_pixels_drag(
+    cfg: AppConfig,
+    canvas_rect: Tuple[int, int, int, int],
+    grid_w: int,
+    grid_h: int,
+    get_pixel: Callable[[int, int], RGB],
+    missing: set[Tuple[int, int]],
+    options: PainterOptions,
+    should_stop: Optional[Callable[[], bool]] = None,
+    progress_cb: Optional[Callable[[int, int], None]] = None,
+) -> None:
+    """Repaint adjacent missed cells by holding the mouse button and dragging.
+
+    Only connect horizontally adjacent cells with exactly the same shade.
+    This uses actual mouse-drag events instead of repeated click attempts.
+    """
+    if not missing:
+        return
+    if cfg.paint_tool_button_pos is None:
+        raise RuntimeError("Paint tool button has not been configured")
+
+    matched: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+    groups: Dict[Tuple[str, Point], Tuple[MainColor, ShadeButton, List[Tuple[int, int]]]] = {}
+    for x, y in sorted(missing, key=lambda xy: (xy[1], xy[0])):
+        rgb = get_pixel(x, y)
+        if rgb not in matched:
+            matched[rgb] = _find_best_match(rgb, cfg)
+        match = matched[rgb]
+        if match is None:
+            continue
+        main, shade = match
+        key = (main.name, shade.pos)
+        if key not in groups:
+            groups[key] = (main, shade, [])
+        groups[key][2].append((x, y))
+
+    drag_opts = PainterOptions(
+        move_duration_s=max(0.04, options.move_duration_s),
+        mouse_down_s=max(0.08, options.mouse_down_s),
+        after_click_delay_s=max(0.11, options.after_click_delay_s),
+        panel_open_delay_s=options.panel_open_delay_s,
+        shade_select_delay_s=options.shade_select_delay_s,
+        row_delay_s=options.row_delay_s,
+        enable_drag_strokes=True,
+        drag_step_duration_s=max(0.055, options.drag_step_duration_s),
+        after_drag_delay_s=max(0.12, options.after_drag_delay_s),
+    )
+
+    for main, shade, coords in sorted(groups.values(), key=lambda item: -len(item[2])):
+        if should_stop and should_stop():
+            return
+        # Select shade afresh for each group and close the palette before painting.
+        _, _, panel_open = _select_shade(
+            cfg, drag_opts, main, shade, None, None, False
+        )
+        if panel_open and cfg.back_button_pos is not None:
+            _tap(cfg.back_button_pos, drag_opts)
+        _tap(cfg.paint_tool_button_pos, drag_opts)
+
+        coords.sort(key=lambda item: (item[1], item[0]))
+        run: List[Tuple[int, int]] = []
+        def paint_run(points_in_run: List[Tuple[int, int]]) -> None:
+            if not points_in_run or (should_stop and should_stop()):
+                return
+            points = [
+                _cell_center(canvas_rect, grid_w, grid_h, x, y)
+                for x, y in points_in_run
+            ]
+            if len(points) >= 2:
+                _stroke(points, drag_opts, should_stop=should_stop)
+            else:
+                # A one-cell drag still creates a held-button movement event.
+                x, y = points_in_run[0]
+                x0, y0, w, h = canvas_rect
+                cx, cy = points[0]
+                right = x0 + ((x + 1) * w) // grid_w - 1
+                left = x0 + (x * w) // grid_w
+                target = (right if cx < right else max(left, cx - 1), cy)
+                _stroke([points[0], target], drag_opts, should_stop=should_stop)
+            if progress_cb:
+                for x, y in points_in_run:
+                    progress_cb(x, y)
+
+        for x, y in coords:
+            if should_stop and should_stop():
+                return
+            if run and (y != run[-1][1] or x != run[-1][0] + 1):
+                paint_run(run)
+                run = []
+            run.append((x, y))
+        paint_run(run)
+
+
+def find_missing_pixels(
+    cfg: AppConfig,
+    canvas_rect: Tuple[int, int, int, int],
+    grid_w: int,
+    grid_h: int,
+    get_pixel: Callable[[int, int], RGB],
+    should_stop: Optional[Callable[[], bool]] = None,
+    status_cb: Optional[Callable[[str], None]] = None,
+) -> set[Tuple[int, int]]:
+    """Encontra células diferentes usando uma única captura da área de desenho."""
+    import mss
+
+    x0, y0, width, height = canvas_rect
+    if width <= 0 or height <= 0 or grid_w <= 0 or grid_h <= 0:
+        raise ValueError("Área de desenho inválida. Selecione o canvas novamente.")
+
+    tolerance = max(15, int(getattr(cfg, "verify_tolerance", 35)))
+    tolerance2 = tolerance * tolerance
+    missing: set[Tuple[int, int]] = set()
+    desired_matches: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+    actual_matches: Dict[RGB, Optional[Tuple[MainColor, ShadeButton]]] = {}
+
+    # Capturar o canvas inteiro evita abrir o capturador milhares de vezes.
+    with mss.mss() as sct:
+        screenshot = sct.grab({
+            "left": int(x0), "top": int(y0),
+            "width": int(width), "height": int(height),
+        })
+        rgb = screenshot.rgb
+
+    row_bytes = width * 3
+    for y in range(grid_h):
+        if should_stop and should_stop():
+            return missing
+        if status_cb is not None and (y % 10 == 0 or y == grid_h - 1):
+            status_cb(f"Conferindo o desenho: {y + 1}/{grid_h} linhas")
+        for x in range(grid_w):
+            desired = get_pixel(x, y)
+            if desired not in desired_matches:
+                desired_matches[desired] = _find_best_match(desired, cfg)
+            match = desired_matches[desired]
+            if match is None:
+                continue
+            _, shade = match
+            # Mesma conta de centro usada na pintura, mas relativa à captura.
+            cx, cy = _cell_center(canvas_rect, grid_w, grid_h, x, y)
+            cx -= x0
+            cy -= y0
+            cx = max(0, min(width - 1, cx))
+            cy = max(0, min(height - 1, cy))
+            offset = cy * row_bytes + cx * 3
+            actual = (rgb[offset], rgb[offset + 1], rgb[offset + 2])
+            if _dist2(actual, shade.rgb) <= tolerance2:
+                continue
+            if actual not in actual_matches:
+                actual_matches[actual] = _find_best_match(actual, cfg)
+            nearest = actual_matches[actual]
+            if nearest is not None and nearest[1].rgb == shade.rgb:
+                continue
+            missing.add((x, y))
+
+    return missing
 
 
 def paint_grid(
@@ -1070,6 +1277,9 @@ def paint_grid(
                 last_shade=last_shade,
                 in_shades_panel=in_shades_panel,
             )
+            if in_shades_panel:
+                _tap(cfg.back_button_pos, options)
+                in_shades_panel = False
             _tap((cx, cy), options)
             if progress_cb:
                 progress_cb(int(x), int(y))
@@ -1189,14 +1399,18 @@ def paint_grid(
                 in_shades_panel=in_shades_panel,
             )
 
+            # Never paint beneath the shade chooser. Its overlay can swallow
+            # mouse events for entire horizontal bands of the canvas.
+            if in_shades_panel:
+                _tap(cfg.back_button_pos, options)
+                in_shades_panel = False
+
             # Paint run
             run_len = run_end - run_start + 1
             if options.enable_drag_strokes and run_len >= 2:
                 pts: List[Point] = []
                 for xx in range(run_start, run_end + 1):
-                    cx = int(x0 + (xx + 0.5) * cell_w)
-                    cy = int(y0 + (y + 0.5) * cell_h)
-                    pts.append((cx, cy))
+                    pts.append(_cell_center(canvas_rect, grid_w, grid_h, xx, y))
                 _rapid_click_stroke(pts, options, should_stop=should_stop)
                 if progress_cb:
                     for xx in range(run_start, run_end + 1):
@@ -1207,9 +1421,7 @@ def paint_grid(
                     _stream_verify_flush(force=False)
             else:
                 for xx in range(run_start, run_end + 1):
-                    cx = int(x0 + (xx + 0.5) * cell_w)
-                    cy = int(y0 + (y + 0.5) * cell_h)
-                    _tap((cx, cy), options)
+                    _tap(_cell_center(canvas_rect, grid_w, grid_h, xx, y), options)
                     if progress_cb:
                         progress_cb(xx, y)
                     if streaming:
@@ -1895,6 +2107,12 @@ def _paint_grid_by_color(
                     status_cb(f"Painting shade: {main.name}/{shade.name} ({len(remaining)} px) …")
             except Exception:
                 pass
+
+        # Always close the shade chooser before painting the canvas.
+        # Otherwise all clicks in an overlapping horizontal strip can be lost.
+        if in_shades_panel:
+            _tap(cfg.back_button_pos, options)
+            in_shades_panel = False
 
         # Defensive: ensure the paint tool is active before doing normal pixel
         # painting. Region bucket-fill uses the bucket tool and, very rarely,
